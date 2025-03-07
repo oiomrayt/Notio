@@ -1,0 +1,40 @@
+FROM node:16-alpine AS builder
+
+WORKDIR /app
+
+# Копируем package.json и package-lock.json
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm ci
+
+# Копируем исходный код
+COPY . .
+
+# Генерируем Prisma клиент
+RUN npx prisma generate
+
+# Компилируем TypeScript
+RUN npm run build
+
+# Многоэтапная сборка для минимизации размера образа
+FROM node:16-alpine
+
+WORKDIR /app
+
+# Копируем package.json и package-lock.json
+COPY package*.json ./
+
+# Устанавливаем только production зависимости
+RUN npm ci --only=production
+
+# Копируем скомпилированный код из предыдущего этапа
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/prisma ./prisma
+
+# Экспортируем порт, на котором будет работать API
+EXPOSE 4000
+
+# Запускаем API сервер
+CMD ["node", "dist/index.js"] 

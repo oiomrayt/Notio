@@ -1,0 +1,69 @@
+groups:
+  - name: node
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая загрузка CPU (instance {{ $labels.instance }})"
+          description: "Загрузка CPU превышает 80%\n  VALUE = {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование памяти (instance {{ $labels.instance }})"
+          description: "Использование памяти превышает 85%\n  VALUE = {{ $value }}%"
+
+      - alert: HighDiskUsage
+        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование диска (instance {{ $labels.instance }})"
+          description: "Использование диска превышает 85%\n  VALUE = {{ $value }}%"
+
+  - name: application
+    rules:
+      - alert: APIHighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое время ответа API"
+          description: "95-й процентиль времени ответа превышает 1 секунду\n  VALUE = {{ $value }}s"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокий процент ошибок"
+          description: "Процент ошибок превышает 5%\n  VALUE = {{ $value }}%"
+
+  - name: database
+    rules:
+      - alert: PostgresHighConnections
+        expr: pg_stat_activity_count > pg_settings_max_connections * 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое количество подключений к PostgreSQL"
+          description: "Количество подключений превышает 80% от максимума\n  VALUE = {{ $value }}"
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование памяти Redis"
+          description: "Использование памяти Redis превышает 80%\n  VALUE = {{ $value }}%" 

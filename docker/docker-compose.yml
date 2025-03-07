@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # PostgreSQL база данных
+  db:
+    image: postgres:13
+    container_name: notio-db
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: notio
+      POSTGRES_PASSWORD: notiopassword
+      POSTGRES_DB: notio
+    ports:
+      - "5432:5432"
+    networks:
+      - notio-network
+
+  # Backend API сервер
+  api:
+    build:
+      context: ../api
+      dockerfile: ../docker/Dockerfile.api
+    container_name: notio-api
+    restart: always
+    depends_on:
+      - db
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://notio:notiopassword@db:5432/notio
+      JWT_SECRET: your-jwt-secret-key-here
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    networks:
+      - notio-network
+
+  # Frontend веб-приложение
+  app:
+    build:
+      context: ../app
+      dockerfile: ../docker/Dockerfile.app
+    container_name: notio-app
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+    networks:
+      - notio-network
+
+networks:
+  notio-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

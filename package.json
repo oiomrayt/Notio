@@ -1,0 +1,66 @@
+{
+    "name": "notio",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+        "app",
+        "api",
+        "electron"
+    ],
+    "scripts": {
+        "dev": "concurrently \"npm run dev:api\" \"npm run dev:app\" \"npm run dev:electron\"",
+        "dev:app": "npm run dev -w app",
+        "dev:api": "npm run dev -w api",
+        "dev:electron": "npm run dev -w electron",
+        "build": "npm run build:app && npm run build:api && npm run build:electron",
+        "build:app": "npm run build -w app",
+        "build:api": "npm run build -w api",
+        "build:electron": "npm run build -w electron",
+        "test": "npm run test:app && npm run test:api",
+        "test:app": "npm run test -w app",
+        "test:api": "npm run test -w api",
+        "lint": "npm run lint:app && npm run lint:api && npm run lint:electron",
+        "lint:app": "npm run lint -w app",
+        "lint:api": "npm run lint -w api",
+        "lint:electron": "npm run lint -w electron",
+        "format": "npm run format:app && npm run format:api && npm run format:electron",
+        "format:app": "npm run format -w app",
+        "format:api": "npm run format -w api",
+        "format:electron": "npm run format -w electron",
+        "type-check": "npm run type-check:app && npm run type-check:api && npm run type-check:electron",
+        "type-check:app": "npm run type-check -w app",
+        "type-check:api": "npm run type-check -w api",
+        "type-check:electron": "npm run type-check -w electron",
+        "prepare": "husky install"
+    },
+    "devDependencies": {
+        "@typescript-eslint/eslint-plugin": "^8.26.0",
+        "@typescript-eslint/parser": "^8.26.0",
+        "concurrently": "^8.2.0",
+        "eslint": "^8.57.1",
+        "eslint-plugin-import": "^2.31.0",
+        "eslint-plugin-jsx-a11y": "^6.10.2",
+        "husky": "^8.0.0",
+        "lint-staged": "^15.1.0"
+    },
+    "engines": {
+        "node": ">=16.0.0",
+        "npm": ">=8.0.0"
+    },
+    "lint-staged": {
+        "*.{ts,tsx}": [
+            "eslint --fix",
+            "prettier --write"
+        ],
+        "*.{json,md}": [
+            "prettier --write"
+        ]
+    },
+    "dependencies": {
+        "@jest/globals": "^29.7.0",
+        "@testing-library/jest-dom": "^6.6.3",
+        "react": "^19.0.0",
+        "react-redux": "^9.2.0",
+        "react-router-dom": "^7.3.0"
+    }
+}

@@ -1,0 +1,81 @@
+name: Infrastructure CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docker-compose*.yml'
+      - 'monitoring/**'
+      - 'traefik/**'
+      - 'scripts/**'
+      - '.github/workflows/infrastructure.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'docker-compose*.yml'
+      - 'monitoring/**'
+      - 'traefik/**'
+      - 'scripts/**'
+      - '.github/workflows/infrastructure.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose files
+        run: |
+          docker compose -f docker-compose.prod.yml config > /dev/null
+          echo "✅ Docker Compose validation passed"
+
+      - name: Validate Prometheus config
+        run: |
+          docker run --rm -v $(pwd)/monitoring/prometheus:/etc/prometheus \
+            prom/prometheus:v2.48 check config /etc/prometheus/prometheus.yml
+          echo "✅ Prometheus config validation passed"
+
+      - name: Validate Alertmanager config
+        run: |
+          docker run --rm -v $(pwd)/monitoring/alertmanager:/etc/alertmanager \
+            prom/alertmanager:v0.26 check-config /etc/alertmanager/alertmanager.yml
+          echo "✅ Alertmanager config validation passed"
+
+      - name: Validate Traefik config
+        run: |
+          docker run --rm -v $(pwd)/traefik:/etc/traefik \
+            traefik:v2.10 check /etc/traefik/traefik.yml
+          echo "✅ Traefik config validation passed"
+
+      - name: Shellcheck backup scripts
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+          echo "✅ Shell scripts validation passed"
+
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: |
+            api/Dockerfile
+            app/Dockerfile
+          format: sarif
+          output-file: hadolint-results.sarif
+          no-fail: true 

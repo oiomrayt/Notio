@@ -1,0 +1,66 @@
+name: Деплой
+
+on:
+  workflow_run:
+    workflows: ["Публикация"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Деплой на сервер
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Настройка SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Добавление хоста в known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Копирование файлов на сервер
+        run: |
+          scp docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:~/notio/
+          scp .env.prod ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:~/notio/.env
+
+      - name: Деплой на сервер
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/notio
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker system prune -f
+
+  notify:
+    name: Уведомление о деплое
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Отправка уведомления в Telegram
+        uses: appleboy/telegram-action@v0.1.1
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message: |
+            🚀 Деплой ${{ github.repository }}
+            
+            Статус: ${{ needs.deploy.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
+            Ветка: ${{ github.ref_name }}
+            Коммит: ${{ github.sha }}
+            
+            Подробности: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} 

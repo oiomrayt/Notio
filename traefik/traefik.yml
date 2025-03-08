@@ -27,7 +27,7 @@ entryPoints:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "admin@notio.app"
+      email: "${TRAEFIK_ACME_EMAIL}"
       storage: /acme.json
       httpChallenge:
         entryPoint: web
@@ -49,7 +49,7 @@ accessLog:
       - "400-599"
 
 log:
-  level: INFO
+  level: ${LOG_LEVEL}
   filePath: "/var/log/traefik/traefik.log"
 
 metrics:

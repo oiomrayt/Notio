@@ -1,6 +1,6 @@
 global:
   resolve_timeout: 5m
-  smtp_from: 'alertmanager@notio.app'
+  smtp_from: '${SMTP_FROM}'
   smtp_smarthost: '${SMTP_HOST}:${SMTP_PORT}'
   smtp_auth_username: '${SMTP_USER}'
   smtp_auth_password: '${SMTP_PASS}'
@@ -15,7 +15,7 @@ route:
 receivers:
   - name: 'email-notifications'
     email_configs:
-      - to: 'admin@notio.app'
+      - to: '${SMTP_FROM}'
         send_resolved: true
 
 inhibit_rules:

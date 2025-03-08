@@ -302,17 +302,52 @@ echo "PROMETHEUS_AUTH=$PROMETHEUS_AUTH"
 
 Вставьте полученные значения `TRAEFIK_AUTH` и `PROMETHEUS_AUTH` в соответствующие поля файла `.env`. 
 
-**ОЧЕНЬ ВАЖНО**: При добавлении паролей и хешей, содержащих символ `$`, необходимо использовать тройное экранирование (каждый символ `$` заменить на `$$$`). Иначе Docker Compose будет генерировать предупреждения и ошибки:
+**ОЧЕНЬ ВАЖНО**: При добавлении паролей и хешей, содержащих символ `$`, необходимо использовать четырехкратное экранирование (каждый символ `$` заменить на `$$$$`). Иначе Docker Compose будет генерировать предупреждения и ошибки:
 
 ```
 # Исходное значение, полученное от htpasswd
 TRAEFIK_AUTH=admin:$apr1$xyz...
 
 # Правильное значение для .env файла
-TRAEFIK_AUTH=admin:$$$apr1$$$xyz...
+TRAEFIK_AUTH=admin:$$$$apr1$$$$xyz...
 ```
 
-Это необходимо для правильной интерпретации Docker Compose переменных окружения, содержащих символ `$`. Двойное экранирование (`$$`) в этом случае недостаточно и может приводить к ошибкам типа "The ZEiricuz variable is not set".
+Это необходимо для правильной интерпретации Docker Compose переменных окружения, содержащих символ `$`. Двойное или тройное экранирование недостаточно и может приводить к ошибкам типа "The ZEiricuz variable is not set" или "The apr1 variable is not set".
+
+### 4.5. Альтернативный подход к хранению хешей паролей
+
+Если у вас возникают постоянные проблемы с экранированием символа `$` в переменных окружения, рекомендуется использовать альтернативный подход через файлы:
+
+```bash
+# Создание директории для хранения учетных данных
+mkdir -p secrets
+
+# Запись хеша пароля Traefik в файл
+echo -n "Введите пароль для доступа к панели Traefik: " && read -s TRAEFIK_PASSWORD && echo
+htpasswd -nb admin $TRAEFIK_PASSWORD > secrets/traefik_auth
+
+# Запись хеша пароля Prometheus в файл
+echo -n "Введите пароль для доступа к Prometheus: " && read -s PROMETHEUS_PASSWORD && echo
+htpasswd -nbBC 10 admin $PROMETHEUS_PASSWORD > secrets/prometheus_auth
+```
+
+Затем нужно изменить конфигурацию Docker Compose, чтобы использовать файлы вместо переменных:
+
+```yaml
+# Пример для Traefik:
+labels:
+  - "traefik.http.middlewares.auth.basicauth.usersfile=/secrets/traefik_auth"
+
+# Пример для Prometheus:
+command:
+  - '--web.config.file=/secrets/prometheus_web.yml'
+```
+
+И создать файл `monitoring/prometheus/web.yml` для Prometheus:
+
+```yaml
+basic_auth_users_file: /secrets/prometheus_auth
+```
 
 ## 5. Настройка конфигурационных файлов
 
@@ -746,17 +781,17 @@ docker compose -f docker-compose.prod.yml restart traefik
 
 Если встречаются ошибки или предупреждения с переменными окружения при запуске Docker Compose, обратите внимание на следующее:
 
-1. **Предупреждения о неопределенных переменных** (например, "The ZEiricuz variable is not set"):
+1. **Предупреждения о неопределенных переменных** (например, "The ZEiricuz variable is not set", "The apr1 variable is not set"):
    ```bash
    # Найдите все переменные с недостаточным экранированием символа $
-   cat .env | grep -E "\$\$[a-zA-Z0-9]"
+   cat .env | grep -E "\$\$\$[a-zA-Z0-9]"
    ```
 
-   Если найдены строки с двойным экранированием `$$`, исправьте их на тройное экранирование `$$$`:
+   Если найдены строки с тройным экранированием `$$$`, исправьте их на четырехкратное экранирование `$$$$`:
    ```bash
    # Пример исправления с использованием sed (для каждой переменной отдельно)
-   sed -i 's/PROMETHEUS_AUTH=admin:\$\$2y\$\$10\$\$yourhashhere/PROMETHEUS_AUTH=admin:\$\$\$2y\$\$\$10\$\$\$yourhashhere/g' .env
-   sed -i 's/TRAEFIK_AUTH=admin:\$\$apr1\$\$xyz/TRAEFIK_AUTH=admin:\$\$\$apr1\$\$\$xyz/g' .env
+   sed -i 's/PROMETHEUS_AUTH=admin:\$\$\$2y\$\$\$10\$\$\$yourhashhere/PROMETHEUS_AUTH=admin:\$\$\$\$2y\$\$\$\$10\$\$\$\$yourhashhere/g' .env
+   sed -i 's/TRAEFIK_AUTH=admin:\$\$\$apr1\$\$\$xyz/TRAEFIK_AUTH=admin:\$\$\$\$apr1\$\$\$\$xyz/g' .env
    ```
 
 2. **Общая проверка всех переменных**:
@@ -766,6 +801,16 @@ docker compose -f docker-compose.prod.yml restart traefik
    ```
    
    Эта команда выведет все обнаруженные ошибки в конфигурации, включая проблемы с переменными окружения.
+   
+3. **Альтернативный подход** - если проблемы с экранированием продолжаются, рассмотрите использование файла `.env.secret` или внешнего хранилища секретов:
+   ```bash
+   # Создание файла с секретами, не интерпретируемого Docker Compose
+   cat > traefik/auth <<EOF
+   admin:$2y$10$yourhashhere
+   EOF
+   
+   # Затем изменить конфигурацию для использования файла вместо переменной
+   ```
 
 ### 10.6. Очистка неиспользуемых ресурсов Docker
 

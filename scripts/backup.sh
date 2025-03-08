@@ -1,64 +1,114 @@
 #!/bin/bash
 set -e
 
+# Функция для вывода сообщений с временной меткой
+log() {
+  echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Функция для очистки при ошибке
+cleanup() {
+  if [ $? -ne 0 ]; then
+    log "❌ Ошибка при выполнении резервного копирования!"
+    # Удаляем неполные резервные копии
+    if [ -d "${BACKUP_PATH}" ]; then
+      rm -rf "${BACKUP_PATH}"
+    fi
+    if [ -f "${BACKUP_PATH}.tar.gz" ]; then
+      rm -f "${BACKUP_PATH}.tar.gz"
+    fi
+  fi
+  log "🏁 Операция завершена."
+}
+
+# Устанавливаем обработчик ошибок
+trap cleanup EXIT
+
 # Загрузка переменных окружения
-source .env
+if [ -f .env ]; then
+  log "📄 Загрузка переменных окружения из .env"
+  source .env
+else
+  log "⚠️ Файл .env не найден, используются значения по умолчанию"
+fi
 
 # Настройка переменных
 BACKUP_DIR="/backup"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_PATH="${BACKUP_DIR}/${TIMESTAMP}"
-S3_BUCKET="s3://${S3_BUCKET_NAME}/backups"
+RETENTION_DAYS=${RETENTION_DAYS:-7}  # Использовать значение из .env или 7 по умолчанию
 
-# Создание директории для бэкапа
-mkdir -p "${BACKUP_PATH}"
+# Проверка доступности директории для резервных копий
+if [ ! -d "${BACKUP_DIR}" ]; then
+  log "📁 Директория ${BACKUP_DIR} не существует, создаем..."
+  mkdir -p "${BACKUP_DIR}" || { log "❌ Не удалось создать директорию ${BACKUP_DIR}"; exit 1; }
+fi
 
-echo "🔄 Начало резервного копирования - $(date)"
+# Создание директории для текущего бэкапа
+log "📁 Создание директории для резервного копирования..."
+mkdir -p "${BACKUP_PATH}" || { log "❌ Не удалось создать директорию ${BACKUP_PATH}"; exit 1; }
+
+log "🔄 Начало резервного копирования - $(date)"
 
 # Бэкап PostgreSQL
-echo "📑 Создание дампа PostgreSQL..."
-docker compose exec -T postgres pg_dump \
+log "📑 Создание дампа PostgreSQL..."
+if ! docker compose exec -T postgres pg_dump \
     -U "${POSTGRES_USER}" \
     -d "${POSTGRES_DB}" \
     -F custom \
-    -f "/tmp/db_backup.dump"
+    -f "/tmp/db_backup.dump"; then
+  log "❌ Ошибка при создании дампа PostgreSQL"
+  exit 1
+fi
 
-docker compose cp postgres:/tmp/db_backup.dump "${BACKUP_PATH}/db_backup.dump"
+log "📋 Копирование дампа PostgreSQL..."
+if ! docker compose cp postgres:/tmp/db_backup.dump "${BACKUP_PATH}/db_backup.dump"; then
+  log "❌ Ошибка при копировании дампа PostgreSQL"
+  exit 1
+fi
 
 # Бэкап Redis
-echo "📑 Создание дампа Redis..."
-docker compose exec -T redis redis-cli SAVE
-docker compose cp redis:/data/dump.rdb "${BACKUP_PATH}/redis_dump.rdb"
+log "📑 Создание дампа Redis..."
+if ! docker compose exec -T redis redis-cli SAVE; then
+  log "❌ Ошибка при создании дампа Redis"
+  exit 1
+fi
+
+log "📋 Копирование дампа Redis..."
+if ! docker compose cp redis:/data/dump.rdb "${BACKUP_PATH}/redis_dump.rdb"; then
+  log "❌ Ошибка при копировании дампа Redis"
+  exit 1
+fi
 
 # Бэкап Grafana
-echo "📊 Копирование данных Grafana..."
-docker compose cp grafana:/var/lib/grafana "${BACKUP_PATH}/grafana"
+log "📊 Копирование данных Grafana..."
+if ! docker compose cp grafana:/var/lib/grafana "${BACKUP_PATH}/grafana"; then
+  log "❌ Ошибка при копировании данных Grafana"
+  exit 1
+fi
 
 # Архивация
-echo "📦 Создание архива..."
-tar -czf "${BACKUP_PATH}.tar.gz" -C "${BACKUP_DIR}" "${TIMESTAMP}"
-
-# Загрузка в S3
-if [ ! -z "${S3_BUCKET_NAME}" ]; then
-    echo "☁️ Загрузка в S3..."
-    aws s3 cp "${BACKUP_PATH}.tar.gz" "${S3_BUCKET}/"
+log "📦 Создание архива..."
+if ! tar -czf "${BACKUP_PATH}.tar.gz" -C "${BACKUP_DIR}" "${TIMESTAMP}"; then
+  log "❌ Ошибка при создании архива"
+  exit 1
 fi
 
-# Очистка старых бэкапов (хранить последние 7 дней)
-echo "🧹 Очистка старых бэкапов..."
-find "${BACKUP_DIR}" -type f -name "*.tar.gz" -mtime +7 -delete
-if [ ! -z "${S3_BUCKET_NAME}" ]; then
-    aws s3 ls "${S3_BUCKET}/" | while read -r line; do
-        createDate=$(echo "${line}" | awk '{print $1" "$2}')
-        createDate=$(date -d "${createDate}" +%s)
-        olderThan=$(date -d "7 days ago" +%s)
-        if [[ ${createDate} -lt ${olderThan} ]]; then
-            fileName=$(echo "${line}" | awk '{print $4}')
-            if [[ ${fileName} != "" ]]; then
-                aws s3 rm "${S3_BUCKET}/${fileName}"
-            fi
-        fi
-    done
+# Удаление временной директории
+log "🧹 Удаление временной директории..."
+rm -rf "${BACKUP_PATH}"
+
+# Очистка старых бэкапов
+log "🧹 Очистка старых бэкапов (старше ${RETENTION_DAYS} дней)..."
+find "${BACKUP_DIR}" -type f -name "*.tar.gz" -mtime +${RETENTION_DAYS} -delete
+
+# Проверка свободного места на диске
+DISK_SPACE=$(df -h ${BACKUP_DIR} | awk 'NR==2 {print $5}' | sed 's/%//')
+if [ "${DISK_SPACE}" -gt 85 ]; then
+  log "⚠️ Предупреждение: свободного места на диске мало (занято ${DISK_SPACE}%)"
 fi
 
-echo "✅ Резервное копирование завершено - $(date)" 
+# Вывод информации о созданном бэкапе
+BACKUP_SIZE=$(du -h "${BACKUP_PATH}.tar.gz" | awk '{print $1}')
+log "✅ Резервное копирование успешно завершено - $(date)"
+log "📁 Файл резервной копии: ${BACKUP_PATH}.tar.gz (${BACKUP_SIZE})" 

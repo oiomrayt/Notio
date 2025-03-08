@@ -8,8 +8,10 @@ services:
       update_config:
         parallelism: 2
         delay: 10s
+        order: start-first
       restart_policy:
         condition: on-failure
+        max_attempts: 3
       resources:
         limits:
           cpus: '0.5'
@@ -23,11 +25,21 @@ services:
     networks:
       - web
       - internal
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=Host(`${DOMAIN}`)"
       - "traefik.http.routers.app.entrypoints=websecure"
       - "traefik.http.routers.app.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.app-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.app-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.app-secure.headers.stsPreload=true"
+      - "traefik.http.routers.app.middlewares=app-secure"
 
   api:
     image: ${REGISTRY}/${REPOSITORY}-backend:${TAG}
@@ -36,8 +48,10 @@ services:
       update_config:
         parallelism: 2
         delay: 10s
+        order: start-first
       restart_policy:
         condition: on-failure
+        max_attempts: 3
       resources:
         limits:
           cpus: '0.5'
@@ -50,12 +64,15 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,11 +80,21 @@ services:
         condition: service_healthy
     networks:
       - internal
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:3000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)"
       - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.api-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.api-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.api-secure.headers.stsPreload=true"
+      - "traefik.http.routers.api.middlewares=api-secure"
 
   postgres:
     image: postgres:16-alpine
@@ -76,6 +103,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
+      - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -85,29 +113,49 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c work_mem=16MB
+        -c maintenance_work_mem=64MB
+        -c max_connections=100
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
       - internal
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.55
     restart: unless-stopped
     environment:
       - REDIS_ADDR=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - monitoring
       - internal
+    depends_on:
+      - redis
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
@@ -117,6 +165,8 @@ services:
     networks:
       - monitoring
       - internal
+    depends_on:
+      - postgres
 
   traefik:
     image: traefik:v2.10
@@ -143,8 +193,11 @@ services:
       - "traefik.http.routers.dashboard.service=api@internal"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.routers.dashboard.middlewares=auth,dashboard-secure"
       - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
+      - "traefik.http.middlewares.dashboard-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.dashboard-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.dashboard-secure.headers.stsPreload=true"
     deploy:
       resources:
         limits:
@@ -173,14 +226,18 @@ services:
   prometheus:
     image: prom/prometheus:v2.48
     restart: unless-stopped
+    user: "65534:65534" # nobody:nogroup
     volumes:
-      - ./monitoring/prometheus:/etc/prometheus
+      - ./monitoring/prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=15d'
       - '--web.enable-lifecycle'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.config.file=/etc/prometheus/web.yml'
     networks:
       - internal
       - monitoring
@@ -189,17 +246,22 @@ services:
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.${DOMAIN}`)"
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.prometheus.middlewares=auth"
+      - "traefik.http.routers.prometheus.middlewares=auth,prom-secure"
+      - "traefik.http.middlewares.prom-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.prom-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.prom-secure.headers.stsPreload=true"
 
   alertmanager:
     image: prom/alertmanager:v0.26
     restart: unless-stopped
+    user: "65534:65534" # nobody:nogroup
     volumes:
-      - ./monitoring/alertmanager:/etc/alertmanager
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
       - alertmanager_data:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
+      - '--web.external-url=https://alerts.${DOMAIN}'
     networks:
       - monitoring
     labels:
@@ -207,29 +269,47 @@ services:
       - "traefik.http.routers.alertmanager.rule=Host(`alerts.${DOMAIN}`)"
       - "traefik.http.routers.alertmanager.entrypoints=websecure"
       - "traefik.http.routers.alertmanager.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.alertmanager.middlewares=auth"
+      - "traefik.http.routers.alertmanager.middlewares=auth,alert-secure"
+      - "traefik.http.middlewares.alert-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.alert-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.alert-secure.headers.stsPreload=true"
 
   grafana:
     image: grafana/grafana:10.2.0
     restart: unless-stopped
+    user: "472" # grafana user
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=https://grafana.${DOMAIN}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_ALLOW_EMBEDDING=false
+      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SECURITY_STRICT_TRANSPORT_SECURITY=true
+      - GF_SECURITY_STRICT_TRANSPORT_SECURITY_MAX_AGE_SECONDS=31536000
+      - GF_SECURITY_STRICT_TRANSPORT_SECURITY_PRELOAD=true
+      - GF_SECURITY_STRICT_TRANSPORT_SECURITY_SUBDOMAINS=true
     networks:
       - monitoring
+    depends_on:
+      - prometheus
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.grafana-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.grafana-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.grafana-secure.headers.stsPreload=true"
+      - "traefik.http.routers.grafana.middlewares=grafana-secure"
 
   node-exporter:
     image: prom/node-exporter:v1.7.0
     restart: unless-stopped
+    user: "65534:65534" # nobody:nogroup
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -239,48 +319,54 @@ services:
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.processes'
+      - '--collector.systemd'
     networks:
       - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
     restart: unless-stopped
+    privileged: true
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
+    command:
+      - '--docker_only=true'
+      - '--housekeeping_interval=30s'
+      - '--storage_duration=1m0s'
     networks:
       - monitoring
-
-  backup:
-    image: amazon/aws-cli:2.13.33
-    restart: unless-stopped
-    volumes:
-      - ./scripts:/scripts:ro
-      - backup_data:/backup
-      - .env:/scripts/.env:ro
-    environment:
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-    entrypoint: [ "crond", "-f", "-d", "8" ]
-    command: |
-      echo "0 1 * * * /scripts/backup.sh >> /var/log/cron.log 2>&1" > /etc/crontabs/root &&
-      crond -f -d 8
-    networks:
-      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
     restart: unless-stopped
+    user: elasticsearch
     environment:
       - discovery.type=single-node
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - xpack.security.enabled=false
+      - bootstrap.memory_lock=true
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     networks:
       - monitoring
     deploy:
@@ -296,6 +382,7 @@ services:
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.1
     restart: unless-stopped
+    user: logstash
     volumes:
       - ./monitoring/logstash/pipeline:/usr/share/logstash/pipeline:ro
     environment:
@@ -313,8 +400,11 @@ services:
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.1
     restart: unless-stopped
+    user: kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_BASEPATH=/kibana
+      - SERVER_REWRITEBASEPATH=true
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -325,7 +415,10 @@ services:
       - "traefik.http.routers.kibana.rule=Host(`logs.${DOMAIN}`)"
       - "traefik.http.routers.kibana.entrypoints=websecure"
       - "traefik.http.routers.kibana.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.kibana.middlewares=auth"
+      - "traefik.http.routers.kibana.middlewares=auth,kibana-secure"
+      - "traefik.http.middlewares.kibana-secure.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.kibana-secure.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.kibana-secure.headers.stsPreload=true"
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.1
@@ -341,6 +434,10 @@ services:
     networks:
       - monitoring
     command: [ "--strict.perms=false" ]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
 volumes:
   postgres_data:
@@ -348,7 +445,6 @@ volumes:
   prometheus_data:
   alertmanager_data:
   grafana_data:
-  backup_data:
   elasticsearch_data:
   traefik_logs:
 

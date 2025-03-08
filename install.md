@@ -275,6 +275,14 @@ echo "Пароль Grafana (GRAFANA_ADMIN_PASSWORD): $(openssl rand -base64 16)"
    TRAEFIK_ACME_EMAIL=admin@yourdomain.com
    ```
 
+8. **Docker**:
+   ```
+   REGISTRY=your-registry  # Например, docker.io/username или ghcr.io/username
+   REPOSITORY=notio        # Имя проекта/репозитория
+   TAG=latest              # Тег/версия образа
+   DOMAIN=yourdomain.com   # Основной домен для доступа к приложению
+   ```
+
 ### 4.4. Создание учетных данных для панелей мониторинга
 
 ```bash
@@ -292,7 +300,19 @@ PROMETHEUS_AUTH=$(htpasswd -nbBC 10 admin $PROMETHEUS_PASSWORD)
 echo "PROMETHEUS_AUTH=$PROMETHEUS_AUTH"
 ```
 
-Вставьте полученные значения `TRAEFIK_AUTH` и `PROMETHEUS_AUTH` в соответствующие поля файла `.env`.
+Вставьте полученные значения `TRAEFIK_AUTH` и `PROMETHEUS_AUTH` в соответствующие поля файла `.env`. 
+
+**ВАЖНО**: При добавлении паролей и хешей, содержащих символ `$`, необходимо экранировать каждый символ `$` двойным символом `$$`. Например:
+
+```
+# Исходное значение, полученное от htpasswd
+TRAEFIK_AUTH=admin:$apr1$xyz...
+
+# Правильное значение для .env файла
+TRAEFIK_AUTH=admin:$$apr1$$xyz...
+```
+
+Это необходимо для правильной интерпретации Docker Compose переменных окружения, содержащих символ `$`.
 
 ## 5. Настройка конфигурационных файлов
 
@@ -485,6 +505,16 @@ setup.kibana:
 
 logging.json: true
 ```
+
+### 5.5. Удаление атрибута `version` из docker-compose.prod.yml
+
+Если в файле `docker-compose.prod.yml` есть атрибут `version`, рекомендуется удалить его, так как он считается устаревшим:
+
+```bash
+nano docker-compose.prod.yml
+```
+
+Найдите и удалите строку, содержащую `version: '3.8'` или подобное значение.
 
 ## 6. Запуск приложения
 
@@ -712,7 +742,18 @@ docker compose -f docker-compose.prod.yml restart grafana
 docker compose -f docker-compose.prod.yml restart traefik
 ```
 
-### 10.5. Очистка неиспользуемых ресурсов Docker
+### 10.5. Проблемы с переменными окружения
+
+Если встречаются ошибки с переменными окружения, особенно содержащими символ `$`:
+
+```bash
+# Проверьте, что все переменные с $ экранированы ($$)
+cat .env | grep -E "\$[a-zA-Z0-9]"
+```
+
+Если найдены неэкранированные `$`, исправьте их, заменив на `$$`.
+
+### 10.6. Очистка неиспользуемых ресурсов Docker
 
 Со временем могут накапливаться неиспользуемые образы и контейнеры:
 

@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, jest } from '@jest/globals';
+import { afterAll, jest } from '@jest/globals';
 
 // Мок для electron
 jest.mock('electron', () => ({

@@ -46,7 +46,7 @@
             }
         ],
         "forceConsistentCasingInFileNames": true,
-        "verbatimModuleSyntax": true,
+        "verbatimModuleSyntax": false,
         "lib": [
             "ESNext",
             "DOM",
@@ -58,21 +58,5 @@
         "tsBuildInfoFile": "./dist/.tsbuildinfo",
         "pretty": true,
         "skipDefaultLibCheck": true
-    },
-    "include": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
-        "src/**/*.js",
-        "src/**/*.jsx"
-    ],
-    "exclude": [
-        "node_modules",
-        "dist",
-        "build",
-        "coverage",
-        "**/*.test.ts",
-        "**/*.test.tsx",
-        "**/*.spec.ts",
-        "**/*.spec.tsx"
-    ]
+    }
 }

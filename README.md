@@ -254,11 +254,65 @@ TRAEFIK_DOMAIN=yourdomain.com
 TRAEFIK_ACME_EMAIL=admin@yourdomain.com
 
 # Docker
-REGISTRY=your-registry  # Например, docker.io/username или ghcr.io/username
-REPOSITORY=notio        # Имя проекта/репозитория
-TAG=latest              # Тег/версия образа
-DOMAIN=yourdomain.com   # Основной домен для доступа к приложению
+REGISTRY=  # Например, docker.io/username или ghcr.io/username
+REPOSITORY=  # Имя проекта/репозитория
+TAG=latest  # Тег/версия образа
+DOMAIN=yourdomain.com  # Основной домен для доступа к приложению
 ```
+
+### Настройка переменных Docker
+
+> **ВАЖНО!** Неправильная настройка переменных Docker является частой причиной ошибок при первом запуске.
+
+В файле `.env` есть секция Docker, которая определяет, откуда будут загружаться образы контейнеров:
+
+```
+# Docker
+REGISTRY=  # Например, docker.io/username или ghcr.io/username
+REPOSITORY=  # Имя проекта/репозитория
+TAG=latest  # Тег/версия образа
+DOMAIN=yourdomain.com  # Основной домен для доступа к приложению
+```
+
+Для правильной настройки выберите один из следующих вариантов:
+
+#### Вариант 1: Использование стандартных общедоступных образов (рекомендуется)
+
+Этот вариант подходит, если вы не имеете своих собственных сборок образов:
+
+```bash
+# Оставьте значения переменных пустыми
+REGISTRY=
+REPOSITORY=
+TAG=latest
+```
+
+#### Вариант 2: Использование вашего приватного репозитория Docker Hub
+
+Если у вас есть собственные образы в Docker Hub:
+
+```bash
+# Пример для Docker Hub
+REGISTRY=docker.io/yourname  # Замените yourname вашим именем пользователя
+REPOSITORY=notio
+TAG=latest
+```
+
+Затем войдите в Docker Hub:
+```bash
+docker login
+```
+
+#### Вариант 3: Использование другого реестра (например, GitHub Container Registry)
+
+```bash
+# Пример для GitHub Container Registry
+REGISTRY=ghcr.io/yourname   # Замените yourname вашим именем пользователя GitHub
+REPOSITORY=notio
+TAG=latest
+```
+
+> **Предупреждение**: Если вы видите ошибки типа `pull access denied for... repository does not exist or may require 'docker login'`, это значит, что указанный репозиторий не существует или требует аутентификации. Проверьте правильность переменных REGISTRY и REPOSITORY.
 
 ### Настройка учетных данных для панелей мониторинга
 
@@ -284,41 +338,11 @@ chmod 600 secrets/prometheus_auth
 cat > monitoring/prometheus/web.yml <<EOF
 basic_auth_users_file: /secrets/prometheus_auth
 EOF
-```
 
-Затем необходимо изменить файл `docker-compose.prod.yml` для использования файлов с учетными данными:
-
-```bash
-# Редактирование docker-compose.prod.yml для использования файлов вместо переменных
-nano docker-compose.prod.yml
-```
-
-Найдите и измените соответствующие строки:
-
-```yaml
-# Для Traefik изменить
-labels:
-  - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
-# На
-labels:
-  - "traefik.http.middlewares.auth.basicauth.usersfile=/secrets/traefik_auth"
-
-# Для Prometheus изменить
-command:
-  - '--web.config.file=/etc/prometheus/web.yml'
-# На
-command:
-  - '--web.config.file=/secrets/prometheus_web.yml'
-
-# И добавить в соответствующие разделы volumes:
-# Для Traefik
-volumes:
-  - ./secrets/traefik_auth:/secrets/traefik_auth:ro
-
-# Для Prometheus
-volumes:
-  - ./secrets/prometheus_auth:/secrets/prometheus_auth:ro
-  - ./monitoring/prometheus/web.yml:/secrets/prometheus_web.yml:ro
+# ВАЖНО: Убедитесь, что в файле .env НЕТ переменных TRAEFIK_AUTH и PROMETHEUS_AUTH
+# Если они там есть, удалите их:
+sed -i '/TRAEFIK_AUTH/d' .env
+sed -i '/PROMETHEUS_AUTH/d' .env
 ```
 
 ## Настройка конфигурационных файлов
@@ -748,6 +772,37 @@ docker network inspect web
    sudo systemctl restart docker
    
    # Запуск контейнеров
+   docker compose -f docker-compose.prod.yml up -d
+   ```
+
+### Проблемы с доступом к Docker образам
+
+Если при запуске вы видите ошибки вида:
+```
+Error response from daemon: pull access denied for yourname/service, repository does not exist or may require 'docker login': denied: requested access to the resource is denied
+```
+
+**Решение**:
+1. Проверьте значения переменных в секции Docker в файле `.env`:
+   ```bash
+   nano .env
+   ```
+
+2. Для использования стандартных образов:
+   ```
+   REGISTRY=
+   REPOSITORY=
+   ```
+
+3. Для использования своего репозитория:
+   ```bash
+   docker login
+   # Введите свои учетные данные
+   ```
+
+4. Перезапустите контейнеры:
+   ```bash
+   docker compose -f docker-compose.prod.yml down
    docker compose -f docker-compose.prod.yml up -d
    ```
 

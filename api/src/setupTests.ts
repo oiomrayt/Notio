@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, jest } from '@jest/globals';
+import { afterAll, jest } from '@jest/globals';
 
 // Увеличиваем timeout для тестов с базой данных
 jest.setTimeout(10000);

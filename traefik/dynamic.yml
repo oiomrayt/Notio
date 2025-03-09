@@ -50,8 +50,8 @@ http:
 
     api-auth:
       basicAuth:
-        users:
-          - "${TRAEFIK_AUTH}"
+        removeHeader: true
+        usersFile: /secrets/traefik_auth
 
     security-chain:
       chain:

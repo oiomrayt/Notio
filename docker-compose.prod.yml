@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${REGISTRY}/${REPOSITORY}-frontend:${TAG}
+    image: notio-frontend:latest
     deploy:
       replicas: 3
       update_config:
@@ -40,7 +40,7 @@ services:
       - "traefik.http.routers.app.middlewares=app-secure"
 
   api:
-    image: ${REGISTRY}/${REPOSITORY}-backend:${TAG}
+    image: notio-backend:latest
     deploy:
       replicas: 3
       update_config:
@@ -177,9 +177,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/acme.json:/acme.json
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      - ./traefik/modsecurity:/etc/traefik/modsecurity:ro
+      - ./secrets/traefik_auth:/secrets/traefik_auth:ro
       - traefik_logs:/var/log/traefik
     environment:
       - TZ=UTC
@@ -192,7 +192,8 @@ services:
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.routers.dashboard.middlewares=auth,dashboard-secure"
-      - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
+      - "traefik.http.middlewares.auth.basicauth.removeheader=true"
+      - "traefik.http.middlewares.auth.basicauth.usersfile=/secrets/traefik_auth"
       - "traefik.http.middlewares.dashboard-secure.headers.stsSeconds=31536000"
       - "traefik.http.middlewares.dashboard-secure.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.dashboard-secure.headers.stsPreload=true"

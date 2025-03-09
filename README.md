@@ -34,7 +34,7 @@ sudo apt update
 sudo apt upgrade -y
 
 # Установка необходимых системных утилит
-sudo apt install -y curl wget git nano htop unzip zip gnupg2 lsb-release ca-certificates apt-transport-https software-properties-common
+sudo apt install -y curl wget git nano htop unzip zip gnupg2 lsb-release ca-certificates apt-transport-https software-properties-common apache2-utils
 ```
 
 ### Настройка брандмауэра
@@ -188,6 +188,9 @@ mkdir -p logs
 
 # Создание директории для секретов
 mkdir -p secrets
+
+# Создание директории для prometheus конфигурации
+mkdir -p monitoring/prometheus
 ```
 
 ## Настройка переменных окружения и учетных данных
@@ -254,9 +257,9 @@ TRAEFIK_DOMAIN=yourdomain.com
 TRAEFIK_ACME_EMAIL=admin@yourdomain.com
 
 # Docker
-REGISTRY=  # Например, docker.io/username или ghcr.io/username
-REPOSITORY=  # Имя проекта/репозитория
-TAG=latest  # Тег/версия образа
+REGISTRY=docker.io/library
+REPOSITORY=
+TAG=latest
 DOMAIN=yourdomain.com  # Основной домен для доступа к приложению
 ```
 
@@ -268,51 +271,13 @@ DOMAIN=yourdomain.com  # Основной домен для доступа к п
 
 ```
 # Docker
-REGISTRY=  # Например, docker.io/username или ghcr.io/username
-REPOSITORY=  # Имя проекта/репозитория
-TAG=latest  # Тег/версия образа
-DOMAIN=yourdomain.com  # Основной домен для доступа к приложению
+REGISTRY=docker.io/library  # Указывает на стандартные образы Docker Hub
+REPOSITORY=                 # Оставьте пустым для стандартных образов
+TAG=latest                  # Тег/версия образа
+DOMAIN=yourdomain.com       # Основной домен для доступа к приложению
 ```
 
-Для правильной настройки выберите один из следующих вариантов:
-
-#### Вариант 1: Использование стандартных общедоступных образов (рекомендуется)
-
-Этот вариант подходит, если вы не имеете своих собственных сборок образов:
-
-```bash
-# Оставьте значения переменных пустыми
-REGISTRY=
-REPOSITORY=
-TAG=latest
-```
-
-#### Вариант 2: Использование вашего приватного репозитория Docker Hub
-
-Если у вас есть собственные образы в Docker Hub:
-
-```bash
-# Пример для Docker Hub
-REGISTRY=docker.io/yourname  # Замените yourname вашим именем пользователя
-REPOSITORY=notio
-TAG=latest
-```
-
-Затем войдите в Docker Hub:
-```bash
-docker login
-```
-
-#### Вариант 3: Использование другого реестра (например, GitHub Container Registry)
-
-```bash
-# Пример для GitHub Container Registry
-REGISTRY=ghcr.io/yourname   # Замените yourname вашим именем пользователя GitHub
-REPOSITORY=notio
-TAG=latest
-```
-
-> **Предупреждение**: Если вы видите ошибки типа `pull access denied for... repository does not exist or may require 'docker login'`, это значит, что указанный репозиторий не существует или требует аутентификации. Проверьте правильность переменных REGISTRY и REPOSITORY.
+**ВАЖНО:** Не оставляйте комментарии после значений переменных (только на отдельных строках), так как они могут быть восприняты как часть значения!
 
 ### Настройка учетных данных для панелей мониторинга
 
@@ -386,7 +351,7 @@ providers:
     exposedByDefault: false
     network: web
   file:
-    filename: /etc/traefik/dynamic.yml
+    filename: /etc/traefik/dynamic/dynamic.yml
 
 certificatesResolvers:
   letsencrypt:
@@ -410,6 +375,37 @@ http:
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
         permissionsPolicy: "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    
+    api-auth:
+      basicAuth:
+        removeHeader: true
+        usersFile: /secrets/traefik_auth
+```
+
+### Подготовка образов для приложения
+
+Если вы используете собственные образы для `app` (frontend) и `api` (backend), необходимо сначала их собрать. Перед сборкой необходимо отредактировать Dockerfile:
+
+```bash
+# Редактирование Dockerfile для frontend
+cd /opt/notio/app
+sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+docker build -t notio-frontend:latest .
+
+# Редактирование Dockerfile для backend
+cd /opt/notio/api
+sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+docker build -t notio-backend:latest .
+```
+
+Затем отредактируйте `docker-compose.prod.yml` для использования собранных образов:
+
+```bash
+cd /opt/notio
+
+# Замена ссылок на образы
+sed -i 's/${REGISTRY}\/${REPOSITORY}-frontend:${TAG}/notio-frontend:latest/g' docker-compose.prod.yml
+sed -i 's/${REGISTRY}\/${REPOSITORY}-backend:${TAG}/notio-backend:latest/g' docker-compose.prod.yml
 ```
 
 ### Проверка и правка docker-compose.prod.yml
@@ -417,10 +413,31 @@ http:
 Если в файле `docker-compose.prod.yml` есть атрибут `version`, удалите его, так как он считается устаревшим:
 
 ```bash
-nano docker-compose.prod.yml
+sed -i '/^version:/d' docker-compose.prod.yml
 ```
 
-Найдите и удалите строку, содержащую `version: '3.8'` или подобное значение.
+Убедитесь, что в файле правильно настроена аутентификация:
+
+```bash
+# Обновление конфигурации аутентификации для Traefik
+sed -i 's/traefik.http.middlewares.auth.basicauth.users=\${TRAEFIK_AUTH}/traefik.http.middlewares.auth.basicauth.removeheader=true\n      - "traefik.http.middlewares.auth.basicauth.usersfile=\/secrets\/traefik_auth"/g' docker-compose.prod.yml
+
+# Добавление монтирования файла traefik_auth
+if ! grep -q "secrets/traefik_auth:/secrets/traefik_auth:ro" docker-compose.prod.yml; then
+  sed -i '/traefik\/traefik.yml:\/etc\/traefik\/traefik.yml:ro/a\      - ./secrets/traefik_auth:/secrets/traefik_auth:ro' docker-compose.prod.yml
+fi
+
+# Добавление монтирования файла prometheus_auth для Prometheus
+if ! grep -q "secrets/prometheus_auth:/secrets/prometheus_auth:ro" docker-compose.prod.yml; then
+  sed -i '/monitoring\/prometheus:\/etc\/prometheus:ro/a\      - ./secrets/prometheus_auth:/secrets/prometheus_auth:ro' docker-compose.prod.yml
+fi
+```
+
+Или отредактируйте эти секции вручную:
+
+```bash
+nano docker-compose.prod.yml
+```
 
 ## Запуск приложения
 
@@ -579,16 +596,27 @@ diff -u .env .env.example
 # При наличии новых параметров, добавьте их в .env
 # nano .env
 
-# 3. Обновление образов без остановки сервисов
+# 3. Если были изменения в Dockerfile, пересоберите образы
+cd /opt/notio/app
+sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+docker build -t notio-frontend:latest .
+
+cd /opt/notio/api
+sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+docker build -t notio-backend:latest .
+
+cd /opt/notio
+
+# 4. Обновление образов без остановки сервисов
 docker compose -f docker-compose.prod.yml pull
 
-# 4. Перезапуск только измененных сервисов
+# 5. Перезапуск только измененных сервисов
 docker compose -f docker-compose.prod.yml up -d --no-deps service1 service2
 
-# 5. Либо перезапуск всех сервисов
+# 6. Либо перезапуск всех сервисов
 docker compose -f docker-compose.prod.yml up -d
 
-# 6. Проверка после обновления
+# 7. Проверка после обновления
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f
 ```
@@ -788,21 +816,34 @@ Error response from daemon: pull access denied for yourname/service, repository 
    nano .env
    ```
 
-2. Для использования стандартных образов:
+2. Установите корректные значения для переменных Docker:
    ```
-   REGISTRY=
+   REGISTRY=docker.io/library
    REPOSITORY=
    ```
 
-3. Для использования своего репозитория:
+3. Локально соберите образы frontend и backend:
    ```bash
-   docker login
-   # Введите свои учетные данные
+   # Для frontend
+   cd /opt/notio/app
+   sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+   docker build -t notio-frontend:latest .
+
+   # Для backend
+   cd /opt/notio/api
+   sed -i 's/RUN npm ci/RUN npm install/g' Dockerfile
+   docker build -t notio-backend:latest .
    ```
 
-4. Перезапустите контейнеры:
+4. Измените ссылки на образы в docker-compose.prod.yml:
    ```bash
-   docker compose -f docker-compose.prod.yml down
+   cd /opt/notio
+   sed -i 's/${REGISTRY}\/${REPOSITORY}-frontend:${TAG}/notio-frontend:latest/g' docker-compose.prod.yml
+   sed -i 's/${REGISTRY}\/${REPOSITORY}-backend:${TAG}/notio-backend:latest/g' docker-compose.prod.yml
+   ```
+
+5. Перезапустите контейнеры:
+   ```bash
    docker compose -f docker-compose.prod.yml up -d
    ```
 
